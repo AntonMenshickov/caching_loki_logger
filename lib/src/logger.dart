@@ -28,6 +28,9 @@ class LokiLogger {
   /// The logger name
   final String? name;
 
+  /// Value added to the Loki `isolate` label for logs from this facade.
+  final String? isolateLabel;
+
   /// Configuration for the logger to connect to Loki Server
   /// If set, the logger will send log events to Loki Server
   final LokiConfig? config;
@@ -54,6 +57,7 @@ class LokiLogger {
   /// Creates a new logger instance.
   LokiLogger({
     this.name,
+    this.isolateLabel,
     this.config,
     LogFilter? filter,
     LogPrinter? printer,
@@ -75,6 +79,7 @@ class LokiLogger {
   LokiLogger.connect(
     SendPort sendPort, {
     this.name,
+    this.isolateLabel,
     LogFilter? filter,
     LogPrinter? printer,
     LogOutput? output,
@@ -212,6 +217,12 @@ class LokiLogger {
       loggerName: name,
       customLabels: customLabels,
     );
+    final lokiCustomLabels = event.customLabels == null && isolateLabel == null
+        ? null
+        : <String, String>{
+            ...?event.customLabels,
+            if (isolateLabel != null) 'isolate': isolateLabel!,
+          };
 
     if (filter.shouldLog(event)) {
       List<String> lines = printer.log(event);
@@ -233,7 +244,8 @@ class LokiLogger {
         'stackTrace': stackTrace?.toString(),
         'time': event.time,
         'loggerName': name,
-        'customLabels': event.customLabels,
+        'isolateLabel': isolateLabel,
+        'customLabels': lokiCustomLabels,
       };
       _sendIsolateMessage(logMessage);
     } else if (_connectedSendPort != null) {
@@ -245,7 +257,8 @@ class LokiLogger {
         'stackTrace': stackTrace?.toString(),
         'time': event.time,
         'loggerName': name,
-        'customLabels': event.customLabels,
+        'isolateLabel': isolateLabel,
+        'customLabels': lokiCustomLabels,
       });
     } else if (lokiClient != null) {
       lokiClient!.log(
@@ -255,7 +268,7 @@ class LokiLogger {
         stackTrace: stackTrace,
         time: event.time,
         loggerName: name,
-        customLabels: event.customLabels,
+        customLabels: lokiCustomLabels,
       );
     }
   }

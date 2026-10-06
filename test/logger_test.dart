@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -253,11 +254,19 @@ void main() {
       final tempDirectory = await Directory.systemTemp.createTemp(
         'loki_logger_isolate_',
       );
-      final request = server.first.then((request) async {
+      final firstRequest = Completer<Map<String, dynamic>>();
+      final secondRequest = Completer<Map<String, dynamic>>();
+      var requestCount = 0;
+      server.listen((request) async {
         final body = await utf8.decoder.bind(request).join();
         request.response.statusCode = HttpStatus.noContent;
         await request.response.close();
-        return jsonDecode(body) as Map<String, dynamic>;
+        final payload = jsonDecode(body) as Map<String, dynamic>;
+        if (requestCount++ == 0) {
+          firstRequest.complete(payload);
+        } else {
+          secondRequest.complete(payload);
+        }
       });
       final logger = LokiLogger(
         multiThreaded: true,
@@ -276,21 +285,43 @@ void main() {
         final connectedLogger = LokiLogger.connect(
           logger.sendPort!,
           name: 'background-worker',
+          isolateLabel: 'workmanager',
           filter: LevelFilter(Level.trace),
           printer: SimplePrinter(),
           output: _NoopOutput(),
         );
         connectedLogger.addLabels({'worker': 'workmanager'});
-        connectedLogger.i('message from background isolate');
+        connectedLogger.i(
+          'message from background isolate',
+          null,
+          null,
+          {'isolate': 'custom-value'},
+        );
 
-        final payload = await request.timeout(const Duration(seconds: 5));
-        final streams = payload['streams'] as List<dynamic>;
-        final labels = streams.single['stream'] as Map<String, dynamic>;
+        final secondLogger = LokiLogger.connect(
+          logger.sendPort!,
+          isolateLabel: 'flutter_background_service',
+          filter: LevelFilter(Level.trace),
+          printer: SimplePrinter(),
+          output: _NoopOutput(),
+        );
+        secondLogger.i('message from another background isolate');
 
-        expect(labels['worker'], 'workmanager');
-        expect(labels['logger'], 'background-worker');
+        final firstPayload =
+            await firstRequest.future.timeout(const Duration(seconds: 5));
+        final secondPayload =
+            await secondRequest.future.timeout(const Duration(seconds: 5));
+        final firstStream = (firstPayload['streams'] as List<dynamic>).single;
+        final secondStream = (secondPayload['streams'] as List<dynamic>).single;
+        final firstLabels = firstStream['stream'] as Map<String, dynamic>;
+        final secondLabels = secondStream['stream'] as Map<String, dynamic>;
+
+        expect(firstLabels['worker'], 'workmanager');
+        expect(firstLabels['logger'], 'background-worker');
+        expect(firstLabels['isolate'], 'workmanager');
+        expect(secondLabels['isolate'], 'flutter_background_service');
         expect(
-          streams.single['values'].single[1],
+          firstStream['values'].single[1],
           'message from background isolate',
         );
       } finally {

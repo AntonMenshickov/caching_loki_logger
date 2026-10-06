@@ -293,6 +293,7 @@ await logger.init();
 final backgroundLogger = LokiLogger.connect(
   logger.sendPort!,
   name: 'background',
+  isolateLabel: 'workmanager',
 );
 backgroundLogger.i('Work completed');
 
@@ -302,6 +303,9 @@ await logger.close();
 Alternatively, provide the same `LokiIsolateNameServer` adapter and
 `isolateName` to each logger; later initializations then reuse the registered
 backend. In Flutter, the adapter can wrap `dart:ui`'s `IsolateNameServer`.
+Set a distinct `isolateLabel` on each facade to add its source name to the Loki
+`isolate` label automatically; this value takes precedence over a custom label
+with the same key.
 Like `IsolatedHive`, isolate ports do not cross Flutter engine boundaries.
 Background plugins running in separate engines need an application-provided
 native/platform bridge to reach the same logger isolate.

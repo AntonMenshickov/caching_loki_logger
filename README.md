@@ -102,6 +102,7 @@ await logger.init();
 final backgroundLogger = LokiLogger.connect(
   logger.sendPort!,
   name: 'background',
+  isolateLabel: 'workmanager',
 );
 backgroundLogger.i('Logged through the shared Loki client');
 
@@ -112,8 +113,11 @@ For automatic discovery, provide a `LokiIsolateNameServer` adapter to each
 logger instance and use the same `isolateName`. Flutter apps can implement this
 interface with `dart:ui`'s `IsolateNameServer`. Connected facades retain the
 same logging methods and forward Loki writes and label updates to the owning
-logger isolate. Local filtering and output are still performed in each calling
-isolate. Like `IsolatedHive`, this uses Dart isolate ports and shares a backend
+logger isolate. Set a different `isolateLabel` on each facade to include that
+source name in the Loki `isolate` label. This label is applied automatically
+and takes precedence over a custom label with the same key. Local filtering and
+output are still performed in each calling isolate. Like `IsolatedHive`, this
+uses Dart isolate ports and shares a backend
 only where the registry can see that port (typically isolates in the same
 Flutter engine). Separate Flutter engines, including background plugins that
 start their own engine, cannot discover or directly share this port; they need

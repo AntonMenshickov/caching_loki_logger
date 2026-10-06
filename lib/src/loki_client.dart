@@ -113,4 +113,10 @@ class LokiClient {
   void dispose() {
     _labels.clear();
   }
+
+  /// Closes the underlying batch queue and its database.
+  Future<void> close() async {
+    _labels.clear();
+    await _batchQueue.close();
+  }
 }

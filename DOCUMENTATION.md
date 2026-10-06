@@ -270,6 +270,42 @@ try {
 
 In this scenario, logs will be both printed to the console and sent to the Loki server.
 
+### Scenario 4: Sharing Loki access through a logger isolate
+
+Enable `multiThreaded` to run the Loki client, persistent queue, and network
+requests in a dedicated isolate. The default (`false`) keeps the existing
+single-isolate behavior.
+
+```dart
+final logger = LokiLogger(
+  multiThreaded: true,
+  config: LokiConfig(
+    host: 'https://loki.example.com',
+    batchQueueOptions: const ReliableBatchQueueOptions(
+      storagePath: '/path/to/app/documents',
+    ),
+  ),
+);
+
+await logger.init();
+
+// Pass this port to other isolates in the same isolate group.
+final backgroundLogger = LokiLogger.connect(
+  logger.sendPort!,
+  name: 'background',
+);
+backgroundLogger.i('Work completed');
+
+await logger.close();
+```
+
+Alternatively, provide the same `LokiIsolateNameServer` adapter and
+`isolateName` to each logger; later initializations then reuse the registered
+backend. In Flutter, the adapter can wrap `dart:ui`'s `IsolateNameServer`.
+Like `IsolatedHive`, isolate ports do not cross Flutter engine boundaries.
+Background plugins running in separate engines need an application-provided
+native/platform bridge to reach the same logger isolate.
+
 ## Best Practices
 
 ### 1. Configure Appropriate Log Levels

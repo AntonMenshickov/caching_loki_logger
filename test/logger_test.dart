@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:isolate';
+
 import 'package:loki_logger/loki_logger.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
@@ -209,4 +213,113 @@ void main() {
       expect(infoFilter.shouldLog(errorEvent), isTrue);
     });
   });
+
+  group('multi-threaded LokiLogger', () {
+    test('reuses a logger isolate registered by another logger', () async {
+      final nameServer = _TestIsolateNameServer();
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_isolate_',
+      );
+      final config = LokiConfig(
+        host: 'http://localhost:3100',
+        batchQueueOptions: ReliableBatchQueueOptions(
+          storagePath: tempDirectory.path,
+        ),
+      );
+      final logger = LokiLogger(
+        multiThreaded: true,
+        isolateNameServer: nameServer,
+        config: config,
+      );
+      final secondLogger = LokiLogger(
+        multiThreaded: true,
+        isolateNameServer: nameServer,
+        config: config,
+      );
+
+      try {
+        await logger.init();
+        await secondLogger.init();
+
+        expect(secondLogger.sendPort, same(logger.sendPort));
+      } finally {
+        await logger.close();
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    test('routes connected logger facades through the same isolate', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_isolate_',
+      );
+      final request = server.first.then((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+        return jsonDecode(body) as Map<String, dynamic>;
+      });
+      final logger = LokiLogger(
+        multiThreaded: true,
+        config: LokiConfig(
+          host: 'http://${server.address.address}:${server.port}',
+          batchQueueOptions: ReliableBatchQueueOptions(
+            storagePath: tempDirectory.path,
+            batchSize: 1,
+            flushInterval: const Duration(hours: 1),
+          ),
+        ),
+      );
+
+      try {
+        await logger.init();
+        final connectedLogger = LokiLogger.connect(
+          logger.sendPort!,
+          name: 'background-worker',
+          filter: LevelFilter(Level.trace),
+          printer: SimplePrinter(),
+          output: _NoopOutput(),
+        );
+        connectedLogger.addLabels({'worker': 'workmanager'});
+        connectedLogger.i('message from background isolate');
+
+        final payload = await request.timeout(const Duration(seconds: 5));
+        final streams = payload['streams'] as List<dynamic>;
+        final labels = streams.single['stream'] as Map<String, dynamic>;
+
+        expect(labels['worker'], 'workmanager');
+        expect(labels['logger'], 'background-worker');
+        expect(
+          streams.single['values'].single[1],
+          'message from background isolate',
+        );
+      } finally {
+        await logger.close();
+        await server.close(force: true);
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+  });
+}
+
+class _NoopOutput extends LogOutput {
+  @override
+  void output(List<String> lines) {}
+}
+
+class _TestIsolateNameServer implements LokiIsolateNameServer {
+  final Map<String, SendPort> _ports = {};
+
+  @override
+  SendPort? lookupPortByName(String name) => _ports[name];
+
+  @override
+  bool registerPortWithName(SendPort port, String name) {
+    if (_ports.containsKey(name)) return false;
+    _ports[name] = port;
+    return true;
+  }
+
+  @override
+  bool removePortNameMapping(String name) => _ports.remove(name) != null;
 }

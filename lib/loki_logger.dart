@@ -3,6 +3,7 @@ export 'src/log_filter.dart';
 export 'src/log_level.dart';
 export 'src/log_output.dart';
 export 'src/log_printer.dart';
+export 'src/isolate_name_server.dart';
 export 'src/logger.dart';
 export 'src/loki_client.dart';
 export 'src/loki_config.dart';

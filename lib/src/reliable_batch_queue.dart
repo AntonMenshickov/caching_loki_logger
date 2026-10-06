@@ -321,6 +321,8 @@ class ReliableBatchQueue {
           level: Level.error,
           message: '[$ReliableBatchQueue] Error during final flush: $e')));
     }
+    _retryTimer?.cancel();
+    _retryTimer = null;
     await _db.close();
   }
 }

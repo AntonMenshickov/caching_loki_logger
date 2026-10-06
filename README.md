@@ -79,6 +79,47 @@ final logger = LokiLogger(
 logger.i('User logged in');
 ```
 
+### Dedicated logger isolate
+
+Set `multiThreaded: true` to move Loki database and network operations off the
+calling isolate. Call `init()` before logging. Other isolates in the same Dart
+isolate group can connect to the same logger via its `sendPort`:
+
+```dart
+final logger = LokiLogger(
+  multiThreaded: true,
+  config: LokiConfig(
+    host: 'https://loki.example.com',
+    batchQueueOptions: const ReliableBatchQueueOptions(
+      storagePath: '/path/to/app/documents',
+    ),
+  ),
+);
+
+await logger.init();
+
+// Pass logger.sendPort to an isolate in the same isolate group.
+final backgroundLogger = LokiLogger.connect(
+  logger.sendPort!,
+  name: 'background',
+);
+backgroundLogger.i('Logged through the shared Loki client');
+
+await logger.close();
+```
+
+For automatic discovery, provide a `LokiIsolateNameServer` adapter to each
+logger instance and use the same `isolateName`. Flutter apps can implement this
+interface with `dart:ui`'s `IsolateNameServer`. Connected facades retain the
+same logging methods and forward Loki writes and label updates to the owning
+logger isolate. Local filtering and output are still performed in each calling
+isolate. Like `IsolatedHive`, this uses Dart isolate ports and shares a backend
+only where the registry can see that port (typically isolates in the same
+Flutter engine). Separate Flutter engines, including background plugins that
+start their own engine, cannot discover or directly share this port; they need
+an application-provided native/platform bridge. Without `multiThreaded: true`,
+existing behavior is unchanged.
+
 ### Using LokiClient Directly
 
 ```dart

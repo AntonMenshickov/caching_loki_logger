@@ -109,7 +109,9 @@ void _lokiLoggerIsolate(SendPort bootstrapPort) {
               stackTrace: message['stackTrace'] == null
                   ? null
                   : StackTrace.fromString(message['stackTrace'] as String),
-              time: message['time'] as DateTime,
+              time: DateTime.fromMicrosecondsSinceEpoch(
+                message['timeMicros'] as int,
+              ),
               loggerName: message['loggerName'] as String?,
               customLabels:
                   (message['customLabels'] as Map?)?.cast<String, String>(),

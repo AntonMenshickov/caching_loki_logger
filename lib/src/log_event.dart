@@ -8,6 +8,7 @@ class LogEvent {
   final Object? error;
   final StackTrace? stackTrace;
   final String? loggerName;
+  final String? isolateLabel;
   final Map<String, String>? customLabels;
 
   LogEvent({
@@ -17,6 +18,7 @@ class LogEvent {
     this.stackTrace,
     DateTime? time,
     this.loggerName,
+    this.isolateLabel,
     this.customLabels,
   }) : time = time ?? DateTime.now();
 

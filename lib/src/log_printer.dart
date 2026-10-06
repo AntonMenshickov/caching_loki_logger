@@ -19,9 +19,16 @@ class SimplePrinter extends LogPrinter {
       buffer.write('${event.time} ');
     }
     buffer.write('[${event.level.name}]');
+    var hasLoggerIdentity = false;
     if (event.loggerName != null) {
-      buffer.write(' ${event.loggerName}:');
+      buffer.write(' ${event.loggerName}');
+      hasLoggerIdentity = true;
     }
+    if (event.isolateLabel != null) {
+      buffer.write(' [${event.isolateLabel}]');
+      hasLoggerIdentity = true;
+    }
+    if (hasLoggerIdentity) buffer.write(':');
     buffer.write(' ${event.formattedMessage}');
     return [buffer.toString()];
   }
@@ -98,6 +105,9 @@ class PrettyPrinter extends LogPrinter {
     String header = '$emoji${event.level.name}';
     if (event.loggerName != null) {
       header += ' [${event.loggerName}]';
+    }
+    if (event.isolateLabel != null) {
+      header += ' [${event.isolateLabel}]';
     }
     if (printTime) {
       header += ' ${event.time.toString()}';

@@ -215,6 +215,26 @@ void main() {
     });
   });
 
+  group('LogPrinter', () {
+    test('prints isolate label beside logger name', () {
+      final event = LogEvent(
+        level: Level.info,
+        message: 'Task completed',
+        loggerName: 'AppLogger',
+        isolateLabel: 'workmanager',
+      );
+
+      expect(
+        SimplePrinter().log(event).single,
+        contains('AppLogger [workmanager]:'),
+      );
+      expect(
+        PrettyPrinter(colors: false).log(event)[1],
+        contains('[AppLogger] [workmanager]'),
+      );
+    });
+  });
+
   group('multi-threaded LokiLogger', () {
     test('reuses a logger isolate registered by another logger', () async {
       final nameServer = _TestIsolateNameServer();
@@ -239,8 +259,11 @@ void main() {
       );
 
       try {
-        await logger.init();
-        await secondLogger.init();
+        await Future.wait([
+          logger.init(),
+          logger.init(),
+          secondLogger.init(),
+        ]);
 
         expect(secondLogger.sendPort, same(logger.sendPort));
       } finally {

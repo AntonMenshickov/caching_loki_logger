@@ -305,7 +305,8 @@ Alternatively, provide the same `LokiIsolateNameServer` adapter and
 backend. In Flutter, the adapter can wrap `dart:ui`'s `IsolateNameServer`.
 Set a distinct `isolateLabel` on each facade to add its source name to the Loki
 `isolate` label automatically; this value takes precedence over a custom label
-with the same key.
+with the same key. The default console printers display it beside the logger
+name as well.
 Like `IsolatedHive`, isolate ports do not cross Flutter engine boundaries.
 Background plugins running in separate engines need an application-provided
 native/platform bridge to reach the same logger isolate.

@@ -49,6 +49,8 @@ class LokiLogger {
   SendPort? _connectedSendPort;
   bool _ownsIsolate = false;
   IsolateLoggerConnection? _isolateConnection;
+  ReceivePort? _registrationPort;
+  Future<void>? _initialization;
   final List<Map<String, Object?>> _pendingIsolateMessages = [];
 
   /// Loki client to send log events to Loki Server
@@ -97,23 +99,40 @@ class LokiLogger {
   /// to this logger after [init] completes.
   SendPort? get sendPort => _connectedSendPort ?? _isolateConnection?.sendPort;
 
-  FutureOr<void> init() async {
-    if (_connectedSendPort != null) return;
-    if (multiThreaded && config != null) {
-      final server = isolateNameServer;
-      final existingPort = server?.lookupPortByName(isolateName);
+  Future<void> init() {
+    final pendingInitialization = _initialization;
+    if (pendingInitialization != null) return pendingInitialization;
+    if (_connectedSendPort != null) return Future<void>.value();
+    if (!multiThreaded || config == null) {
+      return lokiClient?.init() ?? Future<void>.value();
+    }
+
+    final initialization = _initializeIsolate();
+    _initialization = initialization;
+    return initialization.catchError((Object error, StackTrace stackTrace) {
+      if (identical(_initialization, initialization)) {
+        _initialization = null;
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    });
+  }
+
+  Future<void> _initializeIsolate() async {
+    final server = isolateNameServer;
+    if (server != null) {
+      final existingPort = server.lookupPortByName(isolateName);
       if (existingPort != null) {
         _connectedSendPort = existingPort;
         _flushPendingMessages();
         return;
       }
 
-      _isolateConnection ??= await IsolateLoggerConnection.spawn();
-      final newPort = _isolateConnection!.sendPort;
-      if (server != null &&
-          !server.registerPortWithName(newPort, isolateName)) {
-        await _isolateConnection!.close();
-        _isolateConnection = null;
+      final registrationPort = ReceivePort();
+      if (!server.registerPortWithName(
+        registrationPort.sendPort,
+        isolateName,
+      )) {
+        registrationPort.close();
         final registeredPort = server.lookupPortByName(isolateName);
         if (registeredPort == null) {
           throw StateError(
@@ -121,24 +140,65 @@ class LokiLogger {
           );
         }
         _connectedSendPort = registeredPort;
-      } else {
-        _ownsIsolate = true;
-        _connectedSendPort = newPort;
-        try {
-          await _isolateConnection!.initialize(config!);
-        } catch (_) {
-          _isolateConnection!.terminate();
-          _isolateConnection = null;
-          _connectedSendPort = null;
-          _ownsIsolate = false;
-          server?.removePortNameMapping(isolateName);
-          rethrow;
-        }
+        _flushPendingMessages();
+        return;
       }
-      _flushPendingMessages();
-      return;
+
+      _ownsIsolate = true;
+      _registrationPort = registrationPort;
+      _connectedSendPort = registrationPort.sendPort;
+      final messagesBeforeSpawn = <Map<String, Object?>>[];
+      registrationPort.listen((dynamic message) {
+        final connection = _isolateConnection;
+        if (connection == null) {
+          messagesBeforeSpawn.add(Map<String, Object?>.from(message as Map));
+        } else {
+          connection.send(Map<String, Object?>.from(message as Map));
+        }
+      });
+
+      try {
+        final connection = await IsolateLoggerConnection.spawn();
+        _isolateConnection = connection;
+        await connection.initialize(config!);
+        for (final message in messagesBeforeSpawn) {
+          connection.send(message);
+        }
+        _flushPendingMessages();
+        return;
+      } catch (_) {
+        _cleanupRegistration();
+        _isolateConnection?.terminate();
+        _isolateConnection = null;
+        _ownsIsolate = false;
+        rethrow;
+      }
     }
-    return lokiClient?.init();
+
+    _ownsIsolate = true;
+    try {
+      final connection = await IsolateLoggerConnection.spawn();
+      _isolateConnection = connection;
+      _connectedSendPort = connection.sendPort;
+      await connection.initialize(config!);
+      _flushPendingMessages();
+    } catch (_) {
+      _isolateConnection?.terminate();
+      _isolateConnection = null;
+      _connectedSendPort = null;
+      _ownsIsolate = false;
+      rethrow;
+    }
+  }
+
+  void _cleanupRegistration() {
+    _registrationPort?.close();
+    _registrationPort = null;
+    final server = isolateNameServer;
+    if (server?.lookupPortByName(isolateName) == _connectedSendPort) {
+      server!.removePortNameMapping(isolateName);
+    }
+    _connectedSendPort = null;
   }
 
   /// Log a trace message
@@ -215,6 +275,7 @@ class LokiLogger {
       error: error,
       stackTrace: stackTrace,
       loggerName: name,
+      isolateLabel: isolateLabel,
       customLabels: customLabels,
     );
     final lokiCustomLabels = event.customLabels == null && isolateLabel == null
@@ -352,13 +413,15 @@ class LokiLogger {
 
   /// Waits for the logger isolate (or local Loki client) to flush and close.
   Future<void> close() async {
+    final initialization = _initialization;
+    if (initialization != null) await initialization;
     if (_ownsIsolate) {
       final connection = _isolateConnection;
       if (connection != null) await connection.close();
       _isolateConnection = null;
-      _connectedSendPort = null;
-      isolateNameServer?.removePortNameMapping(isolateName);
+      _cleanupRegistration();
       _ownsIsolate = false;
+      _initialization = null;
       return;
     }
     if (_connectedSendPort != null) return;

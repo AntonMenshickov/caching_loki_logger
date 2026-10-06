@@ -116,6 +116,7 @@ same logging methods and forward Loki writes and label updates to the owning
 logger isolate. Set a different `isolateLabel` on each facade to include that
 source name in the Loki `isolate` label. This label is applied automatically
 and takes precedence over a custom label with the same key. Local filtering and
+The default console printers also display it beside the logger name. Local filtering and
 output are still performed in each calling isolate. Like `IsolatedHive`, this
 uses Dart isolate ports and shares a backend
 only where the registry can see that port (typically isolates in the same

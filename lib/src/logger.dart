@@ -409,6 +409,13 @@ class LokiLogger {
     await _sendLokiRequest({'type': 'flushMemoryBuffer'});
   }
 
+  Future<void> setAutoFlush({required bool autoFlush}) async {
+    await _sendLokiRequest({
+      'type': 'setAutoFlush',
+      'autoFlush': autoFlush,
+    });
+  }
+
   Future<Object?> _sendLokiRequest(Map<String, Object?> message) async {
     final initialization = _initialization;
     if (initialization != null) await initialization;
@@ -426,6 +433,10 @@ class LokiLogger {
     }
     if (message['type'] == 'flush') {
       return client.flush(message['count'] as int?);
+    }
+    if (message['type'] == 'setAutoFlush') {
+      await client.setAutoFlush(autoFlush: message['autoFlush'] as bool);
+      return null;
     }
     await client.flushMemoryBuffer();
     return null;

@@ -118,6 +118,10 @@ class LokiClient {
     await _batchQueue.saveMemoryBuffer();
   }
 
+  Future<void> setAutoFlush({required bool autoFlush}) async {
+    await _batchQueue.setAutoFlush(autoFlush: autoFlush);
+  }
+
   /// Disposes resources used by this logger
   Future<void> dispose() async {
     _labels.clear();

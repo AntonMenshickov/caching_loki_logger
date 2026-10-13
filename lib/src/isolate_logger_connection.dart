@@ -140,6 +140,12 @@ void _lokiLoggerIsolate(SendPort bootstrapPort) {
             await client!.flushMemoryBuffer();
             replyTo?.send({'ok': true});
             return;
+          case 'setAutoFlush':
+            await client!.setAutoFlush(
+              autoFlush: message['autoFlush'] as bool,
+            );
+            replyTo?.send({'ok': true});
+            return;
           case 'close':
             await client?.close();
             client = null;

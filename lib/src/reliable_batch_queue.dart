@@ -62,7 +62,8 @@ class ReliableBatchQueue {
   final String _storagePath;
   final int _maxStoredRecords;
   final CacheStrategy _cacheStrategy;
-  final bool _autoFlush;
+  bool _autoFlush;
+  bool _initialized = false;
 
   int _sequenceKey = 0;
   bool _flushing = false;
@@ -116,9 +117,27 @@ class ReliableBatchQueue {
     _queueStore = intMapStoreFactory.store(_queueStoreName);
     _processingStore = intMapStoreFactory.store(_processingStoreName);
     await _restoreProcessing();
+    _initialized = true;
     if (_autoFlush) {
       _flushTimer ??= Timer.periodic(_flushInterval, (_) => _flush());
     }
+  }
+
+  Future<void> setAutoFlush({required bool autoFlush}) async {
+    _autoFlush = autoFlush;
+    if (!autoFlush) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _flushLocked = false;
+      _retryDelay = 0;
+      return;
+    }
+
+    if (!_initialized) return;
+    _flushTimer ??= Timer.periodic(_flushInterval, (_) => _flush());
+    await _processQueue();
   }
 
   Future<void> _restoreProcessing() async {

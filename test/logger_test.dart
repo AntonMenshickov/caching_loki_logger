@@ -431,6 +431,46 @@ void main() {
       }
     });
 
+    test('updates autoFlush through the logger isolate', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_auto_flush_',
+      );
+      var requestCount = 0;
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        requestCount++;
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+      });
+      final logger = LokiLogger(
+        multiThreaded: true,
+        config: LokiConfig(
+          host: 'http://${server.address.address}:${server.port}',
+          batchQueueOptions: ReliableBatchQueueOptions(
+            storagePath: tempDirectory.path,
+            batchSize: 1,
+            flushInterval: const Duration(milliseconds: 10),
+          ),
+        ),
+      );
+
+      try {
+        await logger.init();
+        await logger.setAutoFlush(autoFlush: false);
+        logger.i('auto flush disabled');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(requestCount, 0);
+
+        await logger.setAutoFlush(autoFlush: true);
+        expect(requestCount, 1);
+      } finally {
+        await logger.dispose();
+        await server.close(force: true);
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
     test('throws if the flush returns an error', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final tempDirectory = await Directory.systemTemp.createTemp(

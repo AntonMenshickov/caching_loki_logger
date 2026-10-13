@@ -354,6 +354,152 @@ void main() {
       }
     });
   });
+
+  group('LokiLogger flush methods', () {
+    test('flushes the memory buffer and sends logs', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_flush_',
+      );
+      var requestCount = 0;
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        requestCount++;
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+      });
+      final logger = LokiLogger(
+        config: LokiConfig(
+          host: 'http://${server.address.address}:${server.port}',
+          batchQueueOptions: ReliableBatchQueueOptions(
+            storagePath: tempDirectory.path,
+            autoFlush: false,
+          ),
+        ),
+      );
+
+      try {
+        await logger.init();
+        logger.i('flush test');
+
+        await logger.flushMemoryBuffer();
+        await logger.flush();
+
+        expect(requestCount, 1);
+      } finally {
+        await logger.dispose();
+        await server.close(force: true);
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    test('forwards flush methods through the logger isolate', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_flush_',
+      );
+      var requestCount = 0;
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        requestCount++;
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+      });
+      final logger = LokiLogger(
+        multiThreaded: true,
+        config: LokiConfig(
+          host: 'http://${server.address.address}:${server.port}',
+          batchQueueOptions: ReliableBatchQueueOptions(
+            storagePath: tempDirectory.path,
+            autoFlush: false,
+          ),
+        ),
+      );
+
+      try {
+        await logger.init();
+        logger.i('flush test');
+
+        await logger.flushMemoryBuffer();
+        await logger.flush();
+
+        expect(requestCount, 1);
+      } finally {
+        await logger.dispose();
+        await server.close(force: true);
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    test('throws if the flush returns an error', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_flush_',
+      );
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        request.response.statusCode = HttpStatus.internalServerError;
+        await request.response.close();
+      });
+      final logger = LokiLogger(
+        config: LokiConfig(
+          host: 'http://${server.address.address}:${server.port}',
+          batchQueueOptions: ReliableBatchQueueOptions(
+            storagePath: tempDirectory.path,
+            autoFlush: false,
+          ),
+        ),
+      );
+
+      try {
+        await logger.init();
+        logger.i('flush error test');
+
+        await expectLater(logger.flush(), throwsA(isA<StateError>()));
+      } finally {
+        await logger.dispose();
+        await server.close(force: true);
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    test('does not schedule an automatic retry after manual flush fails',
+        () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'loki_logger_flush_',
+      );
+      var requestCount = 0;
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        requestCount++;
+        request.response.statusCode = HttpStatus.internalServerError;
+        await request.response.close();
+      });
+      final logger = LokiLogger(
+        config: LokiConfig(
+          host: 'http://${server.address.address}:${server.port}',
+          batchQueueOptions: ReliableBatchQueueOptions(
+            storagePath: tempDirectory.path,
+            flushInterval: const Duration(hours: 1),
+          ),
+        ),
+      );
+
+      try {
+        await logger.init();
+        logger.i('manual retry test');
+        await expectLater(logger.flush(), throwsA(isA<StateError>()));
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+        expect(requestCount, 1);
+      } finally {
+        await logger.dispose();
+        await server.close(force: true);
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+  });
 }
 
 class _NoopOutput extends LogOutput {

@@ -93,7 +93,10 @@ class LokiSender {
           .post(uri, headers: headers, body: jsonEncode(payload))
           .timeout(Duration(milliseconds: config.timeout ?? 30000));
       if (response.statusCode >= 400) {
-        _printError('LokiLogger: Error sending logs: ${response.statusCode} ${response.body}');
+        throw http.ClientException(
+          'LokiLogger: Error sending logs: ${response.statusCode} ${response.body}',
+          uri,
+        );
       }
     } catch (e) {
       _printError('LokiLogger: Error sending logs: $e');

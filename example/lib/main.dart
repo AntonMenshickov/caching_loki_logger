@@ -76,5 +76,5 @@ void main() async {
   logger.i('Now labels are reset 22');
 
   // Dispose the logger to free up resources
-  logger.dispose();
+  await logger.dispose();
 }

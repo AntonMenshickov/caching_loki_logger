@@ -142,7 +142,7 @@ lokiClient.log(
 );
 
 // Don't forget to dispose when done
-lokiClient.dispose();
+await lokiClient.dispose();
 ```
 
 ## Configuration

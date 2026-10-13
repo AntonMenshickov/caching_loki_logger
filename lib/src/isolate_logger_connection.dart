@@ -60,11 +60,19 @@ class IsolateLoggerConnection {
     if (_closed) {
       throw StateError('The logger isolate has already been closed.');
     }
+    await requestPort(sendPort, message);
+  }
+
+  static Future<Object?> requestPort(
+    SendPort sendPort,
+    Map<String, Object?> message,
+  ) async {
     final reply = ReceivePort();
     try {
       sendPort.send({...message, 'replyTo': reply.sendPort});
       final response = await reply.first as Map;
       _throwIfError(response);
+      return response['result'];
     } finally {
       reply.close();
     }
@@ -124,6 +132,14 @@ void _lokiLoggerIsolate(SendPort bootstrapPort) {
             client?.removeLabel(message['key'] as String);
           case 'resetLabels':
             client?.resetLabels();
+          case 'flush':
+            final result = await client!.flush(message['count'] as int?);
+            replyTo?.send({'ok': true, 'result': result?.toString()});
+            return;
+          case 'flushMemoryBuffer':
+            await client!.flushMemoryBuffer();
+            replyTo?.send({'ok': true});
+            return;
           case 'close':
             await client?.close();
             client = null;

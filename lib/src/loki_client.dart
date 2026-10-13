@@ -109,9 +109,19 @@ class LokiClient {
     _labels.remove(key);
   }
 
+  ///on fail returns error. on success returns null
+  Future<Object?> flush([int? count]) async {
+    return await _batchQueue.flush(count);
+  }
+
+  Future<void> flushMemoryBuffer() async {
+    await _batchQueue.saveMemoryBuffer();
+  }
+
   /// Disposes resources used by this logger
-  void dispose() {
+  Future<void> dispose() async {
     _labels.clear();
+    await _batchQueue.close();
   }
 
   /// Closes the underlying batch queue and its database.

@@ -54,7 +54,7 @@ class LokiLogger {
   final List<Map<String, Object?>> _pendingIsolateMessages = [];
 
   /// Loki client to send log events to Loki Server
-  late LokiClient? lokiClient;
+  final LokiClient? _lokiClient;
 
   /// Creates a new logger instance.
   LokiLogger({
@@ -69,7 +69,7 @@ class LokiLogger {
     this.isolateName = 'loki_logger',
   })  : filter = filter ?? LevelFilter(level),
         printer = printer ?? PrettyPrinter(),
-        lokiClient = config != null && !multiThreaded
+        _lokiClient = config != null && !multiThreaded
             ? LokiClient(config: config)
             : null,
         output = output ?? ConsoleOutput(),
@@ -92,7 +92,7 @@ class LokiLogger {
         filter = filter ?? LevelFilter(level),
         printer = printer ?? PrettyPrinter(),
         output = output ?? ConsoleOutput(),
-        lokiClient = null,
+        _lokiClient = null,
         _connectedSendPort = sendPort;
 
   /// The port that other isolates in the same isolate group can use to connect
@@ -104,7 +104,7 @@ class LokiLogger {
     if (pendingInitialization != null) return pendingInitialization;
     if (_connectedSendPort != null) return Future<void>.value();
     if (!multiThreaded || config == null) {
-      return lokiClient?.init() ?? Future<void>.value();
+      return _lokiClient?.init() ?? Future<void>.value();
     }
 
     final initialization = _initializeIsolate();
@@ -321,8 +321,8 @@ class LokiLogger {
         'isolateLabel': isolateLabel,
         'customLabels': lokiCustomLabels,
       });
-    } else if (lokiClient != null) {
-      lokiClient!.log(
+    } else if (_lokiClient != null) {
+      _lokiClient.log(
         level: level.toLokiLevel(),
         message: message,
         error: error,
@@ -352,7 +352,7 @@ class LokiLogger {
     } else if (multiThreaded && config != null) {
       _sendIsolateMessage({'type': 'addLabels', 'labels': labels});
     } else {
-      lokiClient?.addLabels(labels);
+      _lokiClient?.addLabels(labels);
     }
   }
 
@@ -370,7 +370,7 @@ class LokiLogger {
     } else if (multiThreaded && config != null) {
       _sendIsolateMessage({'type': 'removeLabel', 'key': key});
     } else {
-      lokiClient?.removeLabel(key);
+      _lokiClient?.removeLabel(key);
     }
   }
 
@@ -389,8 +389,46 @@ class LokiLogger {
     } else if (multiThreaded && config != null) {
       _sendIsolateMessage({'type': 'resetLabels'});
     } else {
-      lokiClient?.resetLabels();
+      _lokiClient?.resetLabels();
     }
+  }
+
+  /// Flushes queued logs, throwing if the client reports an error.
+  Future<void> flush([int? count]) async {
+    final result = await _sendLokiRequest({
+      'type': 'flush',
+      'count': count,
+    });
+    if (result != null) {
+      throw StateError('Failed to flush Loki logs: $result');
+    }
+  }
+
+  /// Writes buffered logs to the local cache without sending them.
+  Future<void> flushMemoryBuffer() async {
+    await _sendLokiRequest({'type': 'flushMemoryBuffer'});
+  }
+
+  Future<Object?> _sendLokiRequest(Map<String, Object?> message) async {
+    final initialization = _initialization;
+    if (initialization != null) await initialization;
+
+    final port = sendPort;
+    if (port != null) {
+      return IsolateLoggerConnection.requestPort(port, message);
+    }
+
+    final client = _lokiClient;
+    if (client == null) {
+      throw StateError(
+        'Loki is not configured or the logger isolate is not initialized.',
+      );
+    }
+    if (message['type'] == 'flush') {
+      return client.flush(message['count'] as int?);
+    }
+    await client.flushMemoryBuffer();
+    return null;
   }
 
   void _sendIsolateMessage(Map<String, Object?> message) {
@@ -425,18 +463,18 @@ class LokiLogger {
       return;
     }
     if (_connectedSendPort != null) return;
-    await lokiClient?.close();
+    await _lokiClient?.close();
   }
 
   /// Disposes resources used by this logger
   ///
   /// This should be called when the logger is no longer needed
   /// to free up resources and prevent memory leaks.
-  void dispose() {
+  Future<void> dispose() async {
     if (_ownsIsolate) {
-      unawaited(_closeAndReportErrors());
+      await _closeAndReportErrors();
     } else if (_connectedSendPort == null && _isolateConnection == null) {
-      lokiClient?.dispose();
+      await _lokiClient?.dispose();
     }
   }
 

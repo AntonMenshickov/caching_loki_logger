@@ -29,12 +29,16 @@ class ReliableBatchQueueOptions {
   ///when stored records count reach limit
   final CacheStrategy cacheStrategy;
 
+  ///Automatically flush logs to server
+  final bool autoFlush;
+
   const ReliableBatchQueueOptions({
     this.batchSize = 1000,
     this.flushInterval = const Duration(seconds: 10),
     required this.storagePath,
     this.maxStoredRecords = 10000,
     this.cacheStrategy = CacheStrategy.replaceByNew,
+    this.autoFlush = true,
   })  : assert(maxStoredRecords > 0, 'Max store records size must be > 0'),
         assert(batchSize > 0, 'Batch size must be > 0'),
         assert(
@@ -58,6 +62,7 @@ class ReliableBatchQueue {
   final String _storagePath;
   final int _maxStoredRecords;
   final CacheStrategy _cacheStrategy;
+  final bool _autoFlush;
 
   int _sequenceKey = 0;
   bool _flushing = false;
@@ -78,7 +83,8 @@ class ReliableBatchQueue {
         _flushInterval = options.flushInterval,
         _storagePath = options.storagePath,
         _maxStoredRecords = options.maxStoredRecords,
-        _cacheStrategy = options.cacheStrategy;
+        _cacheStrategy = options.cacheStrategy,
+        _autoFlush = options.autoFlush;
 
   Future<void> init() async {
     try {
@@ -110,7 +116,9 @@ class ReliableBatchQueue {
     _queueStore = intMapStoreFactory.store(_queueStoreName);
     _processingStore = intMapStoreFactory.store(_processingStoreName);
     await _restoreProcessing();
-    _flushTimer ??= Timer.periodic(_flushInterval, (_) => _flush());
+    if (_autoFlush) {
+      _flushTimer ??= Timer.periodic(_flushInterval, (_) => _flush());
+    }
   }
 
   Future<void> _restoreProcessing() async {
@@ -156,8 +164,10 @@ class ReliableBatchQueue {
         _sequenceKey = 0;
       }
 
-      if (queueRecords.isNotEmpty || processingRecords.isNotEmpty) {
-        await _flush();
+      if (_autoFlush) {
+        if (queueRecords.isNotEmpty || processingRecords.isNotEmpty) {
+          await _flush();
+        }
       }
     } catch (e) {
       ConsoleOutput().output(PrettyPrinter().log(LogEvent(
@@ -170,12 +180,12 @@ class ReliableBatchQueue {
   Future<void> addEvent(EventMessage event) async {
     _memoryBuffer.add(event);
     if (_memoryBuffer.length >= _bufferSize) {
-      await _flushBufferToDB();
+      await saveMemoryBuffer();
     }
     await _processQueue();
   }
 
-  Future<void> _flushBufferToDB() async {
+  Future<void> saveMemoryBuffer() async {
     // Prevent concurrent buffer flushes
     if (_bufferFlushInProgress || _memoryBuffer.isEmpty) {
       return;
@@ -220,16 +230,18 @@ class ReliableBatchQueue {
   }
 
   Future<void> _processQueue() async {
-    final queueRecords = await _queueStore.find(_db);
-    final totalSize = _memoryBuffer.length + queueRecords.length;
+    //Do not processing queue if autoFlush is disabled, user will call flush manually
+    if (!_autoFlush) return;
+    final queueRecords = await _queueStore.query().count(_db);
+    final totalSize = _memoryBuffer.length + queueRecords;
     if (totalSize >= _batchSize) {
       await _flush();
     }
   }
 
-  Future<Iterable<EventMessage>> _prepareBatch() async {
+  Future<Iterable<EventMessage>> _prepareBatch([int? count]) async {
     // Flush memory buffer to DB first
-    await _flushBufferToDB();
+    await saveMemoryBuffer();
 
     final List<EventMessage> events = [];
     final processingRecords = await _processingStore.find(_db);
@@ -242,7 +254,7 @@ class ReliableBatchQueue {
       final queueRecords = await _queueStore.find(_db);
       final List<int> keys = (queueRecords.map((r) => r.key).toList()
             ..sort((a, b) => a.compareTo(b)))
-          .take(_batchSize)
+          .take(count ?? _batchSize)
           .toList();
 
       await _db.transaction((txn) async {
@@ -279,16 +291,28 @@ class ReliableBatchQueue {
     });
   }
 
-  Future<void> _flush() async {
-    if (_flushing || _flushLocked) return;
+  ///Returns error if fails or return null if success
+  Future<Object?> flush([int? count]) {
+    if (count != null && count <= 0) {
+      return Future.value();
+    }
+    return _flush(count: count, scheduleRetry: false);
+  }
+
+  Future<Object?> _flush({
+    int? count,
+    bool scheduleRetry = true,
+  }) async {
+    if (_flushing) return StateError('A flush is already in progress.');
+    if (_flushLocked) return StateError('A flush retry is pending.');
     _flushing = true;
 
     try {
-      final Iterable<EventMessage> batch = await _prepareBatch();
+      final Iterable<EventMessage> batch = await _prepareBatch(count);
 
       if (batch.isEmpty) {
         _flushing = false;
-        return;
+        return null;
       }
       await _sender.sendBatch(batch).timeout(
             const Duration(seconds: 30),
@@ -303,8 +327,14 @@ class ReliableBatchQueue {
           level: Level.error,
           message: '[$ReliableBatchQueue] Failed to flush messages\n$err')));
       _flushing = false;
-      _startRetryTimer();
+      if (_autoFlush && scheduleRetry) {
+        _startRetryTimer();
+      }
+      return err;
+    } finally {
+      _flushing = false;
     }
+    return null;
   }
 
   /// Flushes any remaining events in memory buffer to database and ensures pending batches are sent
@@ -312,14 +342,16 @@ class ReliableBatchQueue {
     _flushTimer?.cancel();
     _retryTimer?.cancel();
     // Flush any remaining events in memory buffer
-    await _flushBufferToDB();
-    // Send any pending batches
-    try {
-      await _flush();
-    } catch (e) {
-      ConsoleOutput().output(PrettyPrinter().log(LogEvent(
-          level: Level.error,
-          message: '[$ReliableBatchQueue] Error during final flush: $e')));
+    await saveMemoryBuffer();
+    if (_autoFlush) {
+      // Send any pending batches
+      try {
+        await _flush();
+      } catch (e) {
+        ConsoleOutput().output(PrettyPrinter().log(LogEvent(
+            level: Level.error,
+            message: '[$ReliableBatchQueue] Error during final flush: $e')));
+      }
     }
     _retryTimer?.cancel();
     _retryTimer = null;

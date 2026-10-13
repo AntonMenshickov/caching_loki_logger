@@ -141,7 +141,7 @@ class MockLokiClient extends _i1.Mock implements _i6.LokiClient {
       );
 
   @override
-  void dispose() => super.noSuchMethod(
+  Future<void> dispose() => super.noSuchMethod(
         Invocation.method(
           #dispose,
           [],

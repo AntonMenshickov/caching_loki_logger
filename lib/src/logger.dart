@@ -420,8 +420,14 @@ class LokiLogger {
     final initialization = _initialization;
     if (initialization != null) await initialization;
 
-    final port = sendPort;
-    if (port != null) {
+    if (multiThreaded) {
+      final port = sendPort;
+      if (port == null) {
+        throw StateError(
+          'Call await logger.init() before using Loki operations in '
+          'multi-threaded mode.',
+        );
+      }
       return IsolateLoggerConnection.requestPort(port, message);
     }
 

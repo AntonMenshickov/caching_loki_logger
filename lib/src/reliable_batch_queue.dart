@@ -372,7 +372,7 @@ class ReliableBatchQueue {
       // Send any pending batches
       try {
         if (!_flushing) {
-          await _flush();
+          await _flush(scheduleRetry: false);
         }
       } catch (e) {
         ConsoleOutput().output(PrettyPrinter().log(LogEvent(

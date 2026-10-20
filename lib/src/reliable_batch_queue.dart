@@ -69,6 +69,8 @@ class ReliableBatchQueue {
   bool _flushing = false;
   Timer? _flushTimer;
 
+  bool _closing = false;
+
   bool _flushLocked = false;
   int _retryDelay = 0;
   Timer? _retryTimer;
@@ -116,7 +118,12 @@ class ReliableBatchQueue {
     }
     _queueStore = intMapStoreFactory.store(_queueStoreName);
     _processingStore = intMapStoreFactory.store(_processingStoreName);
-    await _restoreProcessing();
+    final hasRecords = await _restoreProcessing();
+    if (_autoFlush) {
+      if (hasRecords) {
+        unawaited(_flush());
+      }
+    }
     _initialized = true;
     if (_autoFlush) {
       _flushTimer ??= Timer.periodic(_flushInterval, (_) => _flush());
@@ -140,7 +147,7 @@ class ReliableBatchQueue {
     await _processQueue();
   }
 
-  Future<void> _restoreProcessing() async {
+  Future<bool> _restoreProcessing() async {
     try {
       final processingRecords = await _processingStore.find(_db);
       int recoveredCount = 0;
@@ -182,12 +189,7 @@ class ReliableBatchQueue {
       } else {
         _sequenceKey = 0;
       }
-
-      if (_autoFlush) {
-        if (queueRecords.isNotEmpty || processingRecords.isNotEmpty) {
-          await _flush();
-        }
-      }
+      return queueRecords.isNotEmpty;
     } catch (e) {
       ConsoleOutput().output(PrettyPrinter().log(LogEvent(
           level: Level.error,
@@ -322,6 +324,7 @@ class ReliableBatchQueue {
     int? count,
     bool scheduleRetry = true,
   }) async {
+    if (_closing) return StateError('Queue is closing, cannot flush.');
     if (_flushing) return StateError('A flush is already in progress.');
     if (_flushLocked) return StateError('A flush retry is pending.');
     _flushing = true;
@@ -340,7 +343,9 @@ class ReliableBatchQueue {
       await _processingStore.delete(_db);
       _retryDelay = 0;
       _flushing = false;
-      await _processQueue();
+      if (!_closing) {
+        await _processQueue();
+      }
     } catch (err) {
       ConsoleOutput().output(PrettyPrinter().log(LogEvent(
           level: Level.error,
@@ -358,6 +363,7 @@ class ReliableBatchQueue {
 
   /// Flushes any remaining events in memory buffer to database and ensures pending batches are sent
   Future<void> close() async {
+    _closing = true;
     _flushTimer?.cancel();
     _retryTimer?.cancel();
     // Flush any remaining events in memory buffer
@@ -365,7 +371,9 @@ class ReliableBatchQueue {
     if (_autoFlush) {
       // Send any pending batches
       try {
-        await _flush();
+        if (!_flushing) {
+          await _flush();
+        }
       } catch (e) {
         ConsoleOutput().output(PrettyPrinter().log(LogEvent(
             level: Level.error,
